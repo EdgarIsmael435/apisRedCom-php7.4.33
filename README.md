@@ -2,7 +2,7 @@
 
 API desarrollada en **Laravel 8** y **PHP 7.4.33** para conectar el sistema **REDi** con la base de datos y servicios internos de **RED Comunicación Móvil**.
 
-Esta versión se diseñó para entornos que aún ejecutan **PHP 7.4**, manteniendo compatibilidad con servidores legacy sin perder la funcionalidad esencial del proyecto.
+Esta versión se diseñó para entornos **PHP 7.4**
 
 ---
 
