@@ -35,7 +35,7 @@ El proyecto **no crea tablas nuevas**, solo **consume y actualiza registros exis
 
 ## Instalación
 1. Clonar el repositorio  
-   `git clone https://github.com/EdgarIsmael435/apisRedCom.git`
+   `git clone https://github.com/EdgarIsmael435/apisRedCom-php7.4.33.git`
 2. Instalar dependencias  
    `composer install`
 3. Copiar el archivo `.env.example` a `.env` y configurar credenciales
