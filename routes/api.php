@@ -6,3 +6,5 @@ use App\Http\Middleware\VerifyChipToken;
 Route::post('/updateRecharge', [ChipController::class, 'updateRechargeChip'])->middleware(VerifyChipToken::class);
 
 Route::get('/getDataChip', [ChipController::class, 'getDataChip']);
+
+Route::post('/revertDataSim', [ChipController::class, 'revertDataSim'])->middleware(VerifyChipToken::class);

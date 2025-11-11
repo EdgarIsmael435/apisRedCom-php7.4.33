@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class Chip extends Model
 {
-    protected $table = 'chip_ia';
+    protected $table = 'chip';
     protected $primaryKey = 'id';
     public $timestamps = false;
     protected $fillable = [
@@ -19,7 +19,7 @@ class Chip extends Model
         'fecha',
         'recarga',
         'observaciones',
-        'statusTkBot',
-        'fechaConsultaTkBot'
+        'estatus_sim_bot',
+        'fecha_consulta_sim_bot'
     ];
 }

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\Chip;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Log;
 
 class ChipController extends Controller
 {
@@ -29,8 +30,8 @@ class ChipController extends Controller
             'folio',
             'usuario',
             'fecha',
-            'statusTkBot',
-            'fechaConsultaTkBot'
+            'estatus_sim_bot',
+            'fecha_consulta_sim_bot'
         );
 
         // Coincidencia exacta
@@ -110,11 +111,70 @@ class ChipController extends Controller
         }
     }
 
+    public function revertDataSim(Request $request)
+    {
+        $iccid = $request->input('iccid');
+        $dn    = $request->input('dn');
+
+        if (!$iccid && !$dn) {
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'Debes enviar al menos ICCID o DN'
+            ], 400);
+        }
+
+        try {
+            // Buscar chip por ICCID o DN
+            $chipQuery = Chip::query()
+                ->where('estatus_sim_bot', 1)
+                ->whereNull('folio')
+                ->where(function ($q) use ($iccid, $dn) {
+                    if ($iccid) $q->orWhere('icc', $iccid);
+                    if ($dn)    $q->orWhere('dn', $dn);
+                });
+
+            $chip = $chipQuery->first();
+
+            if (!$chip) {
+                return response()->json([
+                    'status'  => 'no_action',
+                    'message' => 'No se encontró chip bloqueado para liberar'
+                ]);
+            }
+
+            // Liberar chip
+            $chip->update([
+                'estatus_sim_bot' => null,
+                'fecha_consulta_sim_bot' => null
+            ]);
+
+            Log::info("Chip liberado automáticamente por API: ICCID {$chip->icc} / DN {$chip->dn}");
+
+            return response()->json([
+                'status'  => 'success',
+                'message' => 'Chip liberado correctamente',
+                'data'    => [
+                    'icc' => $chip->icc,
+                    'dn'  => $chip->dn
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error al liberar chip: ' . $e->getMessage());
+
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'Error al liberar chip',
+                'error'   => $e->getMessage()
+            ], 500);
+        }
+    }
+
+
     private function updateStatusTicket($chip)
     {
         Chip::where('id', $chip->id)->update([
-            'statusTkBot' => 1,
-            'fechaConsultaTkBot' => now()
+            'estatus_sim_bot' => 1,
+            'fecha_consulta_sim_bot' => now()
         ]);
     }
 
@@ -123,17 +183,23 @@ class ChipController extends Controller
         if (!$chip) return null;
         switch ($chip->compania) {
             case 'MOVISTAR':
-                $diasVigencia = 119;
+                $diasVigencia = 179;
                 break;
             case 'BAIT':
-                $diasVigencia = 170;
+                $diasVigencia = 179;
+                break;
+            case 'VIRGIN':
+                $diasVigencia = 89;
+                break;
+            case 'TELCEL':
+                $diasVigencia = 180;
                 break;
             case 'ATT':
             case 'UNEFON':
                 $diasVigencia = 179;
                 break;
             default:
-                $diasVigencia = 30;
+                $diasVigencia = 150;
                 break;
         }
         $fechaEntrega = Carbon::parse($chip->entrega);
@@ -148,11 +214,16 @@ class ChipController extends Controller
             ], 410);
         }
         if (!empty($chip->fecha) || !empty($chip->folio)) {
+            $fechaFormateada = null;
+
+            if (!empty($chip->fecha)) {
+                $fechaFormateada = \Carbon\Carbon::parse($chip->fecha)->format('d/m/Y');
+            }
             return response()->json([
                 'status' => 'error',
                 'used' => true,
                 'message' => "Chip ya tiene recarga registrada",
-                'data' => ['folio' => $chip->folio, 'fechaRecarga' => $chip->fecha]
+                'data' => ['folio' => $chip->folio, 'fechaRecarga' => $fechaFormateada]
             ], 409);
         }
         return null;
@@ -160,12 +231,12 @@ class ChipController extends Controller
 
     private function checkStatusConsulta($chip)
     {
-        if ($chip->statusTkBot == 1 && 2 == 3) {
+        if ($chip->estatus_sim_bot == 1) {
             return response()->json([
                 'status' => 'error',
                 'blocked' => true,
                 'message' => 'Chip ya fue consultado previamente',
-                'lastConsulta' => $chip->fechaConsultaTkBot
+                'lastConsulta' => $chip->fecha_consulta_sim_bot
             ], 409);
         }
         return null;
