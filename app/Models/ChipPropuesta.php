@@ -12,12 +12,14 @@ class ChipPropuesta extends Model
     protected $fillable = [
         'folio_recarga',
         'dn',
+        'fecha_hora_asignacion',
         'vendedor',
         'fecha_recarga',
         'monto_recarga',
         'usuario_recarga',
         'usuario_captura',
         'obs_captura',
+        'fecha_hora_captura',
         'estatus_sim_bot',
         'fecha_hora_consulta_sim_bot'
     ];

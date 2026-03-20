@@ -26,7 +26,11 @@ class ChipController extends Controller
             'icc',
             'dn',
             'compania',
+            'producto',
             'fecha_entrega',
+            'fecha_activacion',
+            'fecha_caducidad',
+            'fecha_panza',
             'folio_recarga',
             'usuario_recarga',
             'fecha_recarga',
@@ -37,8 +41,7 @@ class ChipController extends Controller
         // Coincidencia exacta
         $chipExact = (clone $query)->where('icc', $iccid)->where('dn', $dn)->first();
         if ($chipExact) {
-            if ($error = $this->checkStatusConsulta($chipExact)) return $error;
-            if ($error = $this->checkCaducidad($chipExact)) return $error;
+            if ($error = $this->validateChipState($chipExact)) return $error;
             $this->updateStatusTicket($chipExact);
             return response()->json(['status' => 'success', 'by' => 'ICCID & DN', 'reliability' => 100, 'data' => $chipExact]);
         }
@@ -46,8 +49,7 @@ class ChipController extends Controller
         // Por ICCID
         $chipIcc = (clone $query)->where('icc', $iccid)->first();
         if ($chipIcc) {
-            if ($error = $this->checkStatusConsulta($chipIcc)) return $error;
-            if ($error = $this->checkCaducidad($chipIcc)) return $error;
+            if ($error = $this->validateChipState($chipIcc)) return $error;
             $this->updateStatusTicket($chipIcc);
             return response()->json(['status' => 'warning', 'by' => 'ICCID', 'reliability' => 50, 'message' => 'El DN no coincide', 'data' => $chipIcc]);
         }
@@ -55,8 +57,7 @@ class ChipController extends Controller
         // Por DN
         $chipDn = (clone $query)->where('dn', $dn)->first();
         if ($chipDn) {
-            if ($error = $this->checkStatusConsulta($chipDn)) return $error;
-            if ($error = $this->checkCaducidad($chipDn)) return $error;
+            if ($error = $this->validateChipState($chipDn)) return $error;
             $this->updateStatusTicket($chipDn);
             return response()->json(['status' => 'warning', 'by' => 'DN', 'reliability' => 50, 'message' => 'El ICCID no coincide', 'data' => $chipDn]);
         }
@@ -79,12 +80,12 @@ class ChipController extends Controller
         try {
             $chip = ChipPropuesta::find($request->id);
 
-            if (!$chip) {
+            /* if (!$chip) {
                 return response()->json([
                     'status'  => 'error',
                     'message' => 'Chip no encontrado'
                 ], 404);
-            }
+            } */
 
             // Si es VIRGIN y no tiene DN, guardar el que viene desde REDi
             if (strtoupper($chip->compania) === 'VIRGIN') {
@@ -103,21 +104,36 @@ class ChipController extends Controller
                 }
             }
 
+
+            $responsable = strtoupper(trim($chip->responsable ?? ''));
+
             $obsCaptura = $chip->obs_captura;
+            $vendedorFinal = $chip->vendedor;
 
-            // Si en sistema NO hay vendedor -> poner cliente en obs_captura
-            if (empty($chip->vendedor)) {
-                $obsCaptura = "Cliente_REDi: " . $request->nombreCliente;
-            }
-
-            // Si vendedor existe pero NO coincide -> borrar vendedor y poner cliente
-            if (!empty($chip->vendedor) && strtoupper($chip->vendedor) !== strtoupper($request->nombreCliente)) {                
+            // Regla especial:
+            // Chips con responsable FONSECA no capturan vendedor en origen.
+            // Para permitir comision en REDi se asigna automaticamente el nombreCliente.
+            if ($responsable === 'FONSECA') {
+                // Forzar vendedor para que se pueda comisionar
+                $vendedorFinal = $request->nombreCliente;
+            } else {
+                // Lógica normal
+                if (empty($chip->vendedor)) {
+                    $obsCaptura .= "\nCliente_REDi: " . $request->nombreCliente;
+                }
+                // Si vendedor existe pero NO coincide
+                /*  if (!empty($chip->vendedor) && strtoupper($chip->vendedor) !== strtoupper($request->nombreCliente)) {
                 $obsCaptura = "Cliente diferente: " . $request->nombreCliente;
+            } */
             }
+
+            $fechaRecarga = Carbon::parse($request->fechaRecarga);
 
             $chip->update([
+                'vendedor'          => $vendedorFinal,
                 'folio_recarga'     => $request->folio,
-                'fecha_recarga'     => Carbon::parse($request->fechaRecarga)->format('Y-m-d'),
+                'fecha_recarga'     => $fechaRecarga->format('Y-m-d'),
+                'fecha_hora_captura' => $fechaRecarga->format('Y-m-d H:i:s'),
                 'monto_recarga'     => $request->recarga,
                 'usuario_recarga'   => $request->usuarioRecarga, // operador REDi
                 'usuario_captura'   => 'REDi',
@@ -139,7 +155,6 @@ class ChipController extends Controller
         }
     }
 
-
     public function revertDataSim(Request $request)
     {
         $iccid = $request->input('iccid');
@@ -156,7 +171,6 @@ class ChipController extends Controller
             // Buscar chip por ICCID o DN
             $chipQuery = ChipPropuesta::query()
                 ->where('estatus_sim_bot', 1)
-                ->whereNull('folio_recarga')
                 ->where(function ($q) use ($iccid, $dn) {
                     if ($iccid) $q->orWhere('icc', $iccid);
                     if ($dn)    $q->orWhere('dn', $dn);
@@ -198,50 +212,111 @@ class ChipController extends Controller
         }
     }
 
-
     private function updateStatusTicket($chip)
     {
-        ChipPropuesta::where('id', $chip->id)->update([
-            'estatus_sim_bot' => 1,
-            'fecha_hora_consulta_sim_bot' => now()
-        ]);
+        return ChipPropuesta::where('id', $chip->id)
+            ->whereNull('estatus_sim_bot')
+            ->update([
+                'estatus_sim_bot' => 1,
+                'fecha_hora_consulta_sim_bot' => now()
+            ]);
     }
 
-    private function checkCaducidad($chip)
+    private function validateChipState($chip)
     {
         if (!$chip) return null;
-        switch ($chip->compania) {
-            case 'MOVISTAR':
-                $diasVigencia = 179;
-                break;
-            case 'BAIT':
-                $diasVigencia = 179;
-                break;
-            case 'VIRGIN':
-                $diasVigencia = 89;
-                break;
-            case 'TELCEL':
-                $diasVigencia = 180;
-                break;
-            case 'ATT':
-            case 'UNEFON':
-                $diasVigencia = 179;
-                break;
-            default:
-                $diasVigencia = 150;
-                break;
+
+        // Validación especial producto "ESPECIAL"
+        $producto = strtoupper(trim($chip->producto ?? ''));
+
+        if ($producto === 'ESPECIAL') {
+            return response()->json([
+                'status' => 'error',
+                'especial' => true,
+                'message' => 'Este chip no pertenece al distribuidor, validalo con tu mayorista'
+            ], 422);
         }
-        $fechaEntrega = Carbon::parse($chip->fecha_entrega);
-        $fechaExpira = $fechaEntrega->copy()->addDays($diasVigencia);
+
+        // Validacion especial panza
+        if ($chip->fecha_panza) {
+
+            $compania = strtoupper(trim($chip->compania));
+
+            if (in_array($compania, ['ATT', 'UNEFON'])) {
+
+                return response()->json([
+                    'status' => 'error',
+                    'panza'  => true,
+                    'message' => 'El chip no se puede recargar porque es panza',
+                    'fechaPanza' => Carbon::parse($chip->fecha_panza)->format('d/m/Y')
+                ], 422);
+            }
+        }
+
+        // Determinar fecha de expiracion real
+        if ($chip->fecha_caducidad) {
+
+            $fechaExpira = Carbon::parse($chip->fecha_caducidad);
+
+            // Si existe activacion la mostramos como base
+            $fechaBaseMostrar = $chip->fecha_activacion
+                ? Carbon::parse($chip->fecha_activacion)->format('d/m/Y')
+                : null;
+        } else {
+
+            $fechaBase = null;
+
+            if ($chip->fecha_activacion) {
+                $fechaBase = Carbon::parse($chip->fecha_activacion);
+            } elseif ($chip->fecha_entrega) {
+                $fechaBase = Carbon::parse($chip->fecha_entrega);
+            }
+
+            if (!$fechaBase) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Chip no tiene fecha valida para calcular vigencia'
+                ], 422);
+            }
+
+            $compania = strtoupper(trim($chip->compania));
+            switch ($compania) {
+                case 'MOVISTAR':
+                    $diasVigencia = 179;
+                    break;
+                case 'BAIT':
+                    $diasVigencia = 179;
+                    break;
+                case 'VIRGIN':
+                    $diasVigencia = 89;
+                    break;
+                case 'TELCEL':
+                    $diasVigencia = 180;
+                    break;
+                case 'ATT':
+                case 'UNEFON':
+                    $diasVigencia = 179;
+                    break;
+                default:
+                    $diasVigencia = 150;
+                    break;
+            }
+
+            $fechaExpira = $fechaBase->copy()->addDays($diasVigencia);
+            $fechaBaseMostrar = $fechaBase->format('d/m/Y');
+        }
+
         if ($fechaExpira->lt(now())) {
             return response()->json([
                 'status' => 'error',
                 'expired' => true,
-                'dateDelivery' => $fechaEntrega->format('d/m/Y'),
+                'dateBase' => $fechaBaseMostrar,
                 'dateExpired' => $fechaExpira->format('d/m/Y'),
-                'message' => "Chip caducado (vigencia {$diasVigencia} días)"
+                'message' => "Chip caducado"
             ], 410);
         }
+
+
         if (!empty($chip->fecha_recarga) || !empty($chip->folio_recarga)) {
             $fechaFormateada = null;
 
@@ -255,11 +330,7 @@ class ChipController extends Controller
                 'data' => ['folio' => $chip->folio_recarga, 'fechaRecarga' => $fechaFormateada]
             ], 409);
         }
-        return null;
-    }
 
-    private function checkStatusConsulta($chip)
-    {
         if ($chip->estatus_sim_bot == 1) {
             return response()->json([
                 'status' => 'error',
